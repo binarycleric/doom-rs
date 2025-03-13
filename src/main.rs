@@ -9,6 +9,22 @@ const BULLET_SPEED: i32 = 10;
 const ENEMY_SPEED: i32 = 2;
 const FIRE_RATE: Duration = Duration::from_secs(1);
 
+const MAZE: &[(i32, i32, u32, u32)] = &[
+    (100, 100, 600, 20),  // Top horizontal wall
+    (100, 480, 600, 20),  // Bottom horizontal wall
+    (100, 100, 20, 400),  // Left vertical wall
+    (680, 100, 20, 400),  // Right vertical wall
+    (300, 100, 20, 200),  // Middle vertical wall
+    (500, 300, 20, 200),  // Middle vertical wall
+];
+
+#[derive(Clone, PartialEq)]
+struct Enemy {
+    x: i32,
+    y: i32,
+    alive: bool,
+}
+
 struct Player {
     x: i32,
     y: i32,
@@ -25,19 +41,29 @@ struct Bullet {
     active: bool,
 }
 
-#[derive(Clone, PartialEq)]
-struct Enemy {
-    x: i32,
-    y: i32,
-    alive: bool,
-}
-
 impl Player {
     fn move_player(&mut self, keys: &[Keycode]) {
-        if keys.contains(&Keycode::A) { self.x -= PLAYER_SPEED; }
-        if keys.contains(&Keycode::D) { self.x += PLAYER_SPEED; }
-        if keys.contains(&Keycode::W) { self.y -= PLAYER_SPEED; }
-        if keys.contains(&Keycode::S) { self.y += PLAYER_SPEED; }
+        let mut new_x = self.x;
+        let mut new_y = self.y;
+
+        if keys.contains(&Keycode::A) { new_x -= PLAYER_SPEED; }
+        if keys.contains(&Keycode::D) { new_x += PLAYER_SPEED; }
+        if keys.contains(&Keycode::W) { new_y -= PLAYER_SPEED; }
+        if keys.contains(&Keycode::S) { new_y += PLAYER_SPEED; }
+
+        if !self.collides_with_maze(new_x, new_y) {
+            self.x = new_x;
+            self.y = new_y;
+        }
+    }
+
+    fn collides_with_maze(&self, x: i32, y: i32) -> bool {
+        for &(mx, my, mw, mh) in MAZE {
+            if x < mx + mw as i32 && x + 20 > mx && y < my + mh as i32 && y + 20 > my {
+                return true;
+            }
+        }
+        false
     }
 
     fn shoot(&mut self, target_x: i32, target_y: i32) -> Option<Bullet> {
@@ -66,47 +92,35 @@ impl Bullet {
 
 impl Enemy {
     fn update(&mut self, player_x: i32, player_y: i32, other_enemies: &[Enemy]) {
-        if self.x < player_x {
-            self.x += ENEMY_SPEED;
-        } else if self.x > player_x {
-            self.x -= ENEMY_SPEED;
+        if !self.alive {
+            return;
         }
 
-        if self.y < player_y {
-            self.y += ENEMY_SPEED;
-        } else if self.y > player_y {
-            self.y -= ENEMY_SPEED;
+        let mut rng = rand::thread_rng();
+        let direction = rng.gen_range(0..4);
+        let mut new_x = self.x;
+        let mut new_y = self.y;
+
+        match direction {
+            0 => new_x -= ENEMY_SPEED,
+            1 => new_x += ENEMY_SPEED,
+            2 => new_y -= ENEMY_SPEED,
+            _ => new_y += ENEMY_SPEED,
         }
 
-        for other in other_enemies {
-            if self != other && (self.x - other.x).abs() < 20 && (self.y - other.y).abs() < 20 {
-                if self.x < other.x {
-                    self.x -= ENEMY_SPEED;
-                } else {
-                    self.x += ENEMY_SPEED;
-                }
-                if self.y < other.y {
-                    self.y -= ENEMY_SPEED;
-                } else {
-                    self.y += ENEMY_SPEED;
-                }
+        if !self.collides_with_maze(new_x, new_y) {
+            self.x = new_x;
+            self.y = new_y;
+        }
+    }
+
+    fn collides_with_maze(&self, x: i32, y: i32) -> bool {
+        for &(mx, my, mw, mh) in MAZE {
+            if x < mx + mw as i32 && x + 20 > mx && y < my + mh as i32 && y + 20 > my {
+                return true;
             }
         }
-
-        if (self.x - player_x).abs() < 20 && (self.y - player_y).abs() < 20 {
-            if self.x < player_x {
-                self.x -= ENEMY_SPEED;
-            } else {
-                self.x += ENEMY_SPEED;
-            }
-            if self.y < player_y {
-                self.y -= ENEMY_SPEED;
-            } else {
-                self.y += ENEMY_SPEED;
-            }
-        }
-
-        self.alive &= self.y <= SCREEN_HEIGHT as i32;
+        false
     }
 }
 
@@ -132,13 +146,13 @@ fn main() {
     let mut canvas = window.into_canvas().build().unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    let mut player = Player { x: 400, y: 500, health: 100, ammo: 50, last_shot: Instant::now() };
+    let mut player = Player { x: 120, y: 120, health: 100, ammo: 50, last_shot: Instant::now() };
     let mut bullets = vec![];
     let mut enemies = vec![
-        Enemy { x: 400, y: 100, alive: true },
-        Enemy { x: 450, y: 100, alive: true },
-        Enemy { x: 500, y: 100, alive: true },
-        Enemy { x: 550, y: 100, alive: true }
+        Enemy { x: 400, y: 120, alive: true },
+        Enemy { x: 450, y: 120, alive: true },
+        Enemy { x: 500, y: 120, alive: true },
+        Enemy { x: 550, y: 120, alive: true }
     ];
 
     'running: loop {
@@ -181,6 +195,12 @@ fn main() {
 
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
+
+        // Draw the maze
+        canvas.set_draw_color(Color::RGB(255, 255, 255));
+        for &(x, y, w, h) in MAZE {
+            canvas.fill_rect(Rect::new(x, y, w, h)).unwrap();
+        }
 
         canvas.set_draw_color(Color::RGB(0, 255, 0));
         canvas.fill_rect(Rect::new(player.x, player.y, 20, 20)).unwrap();
