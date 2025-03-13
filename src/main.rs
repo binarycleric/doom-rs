@@ -25,6 +25,7 @@ struct Bullet {
     active: bool,
 }
 
+#[derive(Clone, PartialEq)]
 struct Enemy {
     x: i32,
     y: i32,
@@ -64,7 +65,7 @@ impl Bullet {
 }
 
 impl Enemy {
-    fn update(&mut self, player_x: i32, player_y: i32) {
+    fn update(&mut self, player_x: i32, player_y: i32, other_enemies: &[Enemy]) {
         if self.x < player_x {
             self.x += ENEMY_SPEED;
         } else if self.x > player_x {
@@ -75,6 +76,34 @@ impl Enemy {
             self.y += ENEMY_SPEED;
         } else if self.y > player_y {
             self.y -= ENEMY_SPEED;
+        }
+
+        for other in other_enemies {
+            if self != other && (self.x - other.x).abs() < 20 && (self.y - other.y).abs() < 20 {
+                if self.x < other.x {
+                    self.x -= ENEMY_SPEED;
+                } else {
+                    self.x += ENEMY_SPEED;
+                }
+                if self.y < other.y {
+                    self.y -= ENEMY_SPEED;
+                } else {
+                    self.y += ENEMY_SPEED;
+                }
+            }
+        }
+
+        if (self.x - player_x).abs() < 20 && (self.y - player_y).abs() < 20 {
+            if self.x < player_x {
+                self.x -= ENEMY_SPEED;
+            } else {
+                self.x += ENEMY_SPEED;
+            }
+            if self.y < player_y {
+                self.y -= ENEMY_SPEED;
+            } else {
+                self.y += ENEMY_SPEED;
+            }
         }
 
         self.alive &= self.y <= SCREEN_HEIGHT as i32;
@@ -133,7 +162,11 @@ fn main() {
 
         bullets.iter_mut().for_each(Bullet::update);
         bullets.retain(|b| b.active);
-        enemies.iter_mut().for_each(|enemy| enemy.update(player.x, player.y));
+
+        let other_enemies: Vec<_> = enemies.iter().cloned().collect();
+        enemies.iter_mut().for_each(|enemy| {
+            enemy.update(player.x, player.y, &other_enemies);
+        });
         enemies.retain(|e| e.alive);
 
         bullets.iter_mut().for_each(|bullet| {
