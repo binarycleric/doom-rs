@@ -75,6 +75,8 @@ struct Enemy {
     y: i32,
     health: i32,
     alive: bool,
+    vx: i32,
+    vy: i32,
 }
 
 struct Player {
@@ -230,9 +232,19 @@ impl Enemy {
             // Move only a small step along the path
             if path.len() > 1 {
                 let next = path[1];
+                if self.collides_with_enemies(next.0, next.1, other_enemies) {
+                    // Apply a small random nudge if blocked by other enemies
+                    let mut rng = rand::thread_rng();
+                    let rx = rng.gen_range(-1..=1);
+                    let ry = rng.gen_range(-1..=1);
+                    self.x += rx;
+                    self.y += ry;
+                }
                 // ...existing collision checks...
                 if !self.collides_with_maze(next.0, next.1, maze)
                     && !self.collides_with_enemies(next.0, next.1, other_enemies) {
+                    self.vx = next.0 - self.x;
+                    self.vy = next.1 - self.y;
                     self.x = next.0;
                     self.y = next.1;
                 }
@@ -244,6 +256,8 @@ impl Enemy {
             let distance = ((dx * dx + dy * dy) as f64).sqrt();
             let vx = (ENEMY_SPEED as f64 * dx as f64 / distance) as i32;
             let vy = (ENEMY_SPEED as f64 * dy as f64 / distance) as i32;
+            self.vx = vx;
+            self.vy = vy;
 
             let mut new_x = self.x + vx;
             let mut new_y = self.y + vy;
@@ -323,10 +337,10 @@ fn main() {
     let mut player = Player { x: 120, y: 120, health: 100, ammo: 50, last_shot: Instant::now() };
     let mut bullets = vec![];
     let mut enemies = vec![
-        Enemy { x: 400, y: 120, health: 3, alive: true },
-        Enemy { x: 450, y: 120, health: 3, alive: true },
-        Enemy { x: 500, y: 120, health: 3, alive: true },
-        Enemy { x: 550, y: 120, health: 3, alive: true }
+        Enemy { x: 400, y: 120, health: 3, alive: true, vx: 0, vy: 0 },
+        Enemy { x: 450, y: 120, health: 3, alive: true, vx: 0, vy: 0 },
+        Enemy { x: 500, y: 120, health: 3, alive: true, vx: 0, vy: 0 },
+        Enemy { x: 550, y: 120, health: 3, alive: true, vx: 0, vy: 0 }
     ];
     let mut ammo_drops = vec![];
 
@@ -422,6 +436,35 @@ fn main() {
                 }
                 canvas.fill_rect(Rect::new(enemy.x, enemy.y, 20, 20)).unwrap();
                 render_enemy_health(&mut canvas, &ttf_context, enemy);
+
+                // Draw a thicker arrow, half the thickness of the 20px enemy (10px)
+                let center_x = enemy.x + 10;
+                let center_y = enemy.y + 10;
+                let arrow_end_x = center_x + enemy.vx;
+                let arrow_end_y = center_y + enemy.vy;
+                canvas.set_draw_color(Color::RGB(255, 255, 0));
+                let thickness = 10;
+                for offset in -thickness/2..thickness/2 {
+                    canvas.draw_line((center_x, center_y + offset), (arrow_end_x, arrow_end_y + offset)).unwrap();
+                }
+
+                // Draw a circle around the enemy
+                let radius = 40;
+                for angle in (0..360).step_by(10) {
+                    let rad = (angle as f64).to_radians();
+                    let next_rad = ((angle + 10) as f64).to_radians();
+                    let x1 = center_x + (rad.cos() * radius as f64) as i32;
+                    let y1 = center_y + (rad.sin() * radius as f64) as i32;
+                    let x2 = center_x + (next_rad.cos() * radius as f64) as i32;
+                    let y2 = center_y + (next_rad.sin() * radius as f64) as i32;
+                    canvas.draw_line((x1, y1), (x2, y2)).unwrap();
+                }
+
+                // Draw an arrow on the circle pointing to the direction (vx, vy)
+                let angle_radians = (enemy.vy as f64).atan2(enemy.vx as f64);
+                let arrow_x = center_x + (radius as f64 * angle_radians.cos()) as i32;
+                let arrow_y = center_y + (radius as f64 * angle_radians.sin()) as i32;
+                canvas.draw_line((center_x, center_y), (arrow_x, arrow_y)).unwrap();
             } else {
                 // Draw explosion effect for dead enemies
                 canvas.set_draw_color(Color::RGB(255, 0, 0));
