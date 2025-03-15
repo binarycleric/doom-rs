@@ -66,8 +66,6 @@ fn generate_maze() -> Vec<(i32, i32, u32, u32)> {
     maze.push((0,               0,                20, total_height as u32));  // left
     maze.push((total_width - 20, 0,        20, total_height as u32));  // right
 
-    println!("{:?}", grid);
-
     maze
 }
 
@@ -150,24 +148,110 @@ impl Bullet {
     }
 }
 
+/// A faster A* pathfinding method to replace the slower BFS.
+fn find_path(maze: &[(i32, i32, u32, u32)], start: (i32, i32), end: (i32, i32)) -> Option<Vec<(i32, i32)>> {
+    use std::collections::{BinaryHeap, HashMap, HashSet};
+    #[derive(Copy, Clone, Eq, PartialEq)]
+    struct Node {
+        pos: (i32, i32),
+        f_score: i32,
+    }
+    impl Ord for Node {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            other.f_score.cmp(&self.f_score)
+        }
+    }
+    impl PartialOrd for Node {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    let mut blocked = HashSet::new();
+    for &(mx, my, mw, mh) in maze {
+        for ry in my..my + mh as i32 {
+            for rx in mx..mx + mw as i32 {
+                blocked.insert((rx, ry));
+            }
+        }
+    }
+
+    let heuristic = |p: (i32, i32)| -> i32 {
+        let dx = (p.0 - end.0).abs();
+        let dy = (p.1 - end.1).abs();
+        dx + dy
+    };
+
+    let mut open_set = BinaryHeap::new();
+    let mut came_from = HashMap::new();
+    let mut g_score = HashMap::new();
+
+    g_score.insert(start, 0);
+    open_set.push(Node { pos: start, f_score: heuristic(start) });
+
+    while let Some(Node { pos, .. }) = open_set.pop() {
+        if pos == end {
+            let mut path = vec![pos];
+            let mut current = pos;
+            while let Some(&prev) = came_from.get(&current) {
+                path.push(prev);
+                current = prev;
+            }
+            path.reverse();
+            return Some(path);
+        }
+        for &(dx, dy) in &[(0,1),(0,-1),(1,0),(-1,0)] {
+            let nx = pos.0 + dx;
+            let ny = pos.1 + dy;
+            if nx >= 0 && ny >= 0 && !blocked.contains(&(nx, ny)) {
+                let tentative_g = g_score.get(&pos).unwrap_or(&i32::MAX) + 1;
+                if tentative_g < *g_score.get(&(nx, ny)).unwrap_or(&i32::MAX) {
+                    came_from.insert((nx, ny), pos);
+                    g_score.insert((nx, ny), tentative_g);
+                    let f_score = tentative_g + heuristic((nx, ny));
+                    open_set.push(Node { pos: (nx, ny), f_score });
+                }
+            }
+        }
+    }
+    None
+}
+
 impl Enemy {
     fn update(&mut self, player_x: i32, player_y: i32, other_enemies: &[Enemy], maze: &[(i32, i32, u32, u32)]) {
         if !self.alive {
             return;
         }
 
-        let dx = player_x - self.x;
-        let dy = player_y - self.y;
-        let distance = ((dx * dx + dy * dy) as f64).sqrt();
-        let vx = (ENEMY_SPEED as f64 * dx as f64 / distance) as i32;
-        let vy = (ENEMY_SPEED as f64 * dy as f64 / distance) as i32;
+        // Instead of directly charging the player, use BFS to find a path.
+        let start = (self.x, self.y);
+        let end = (player_x, player_y);
+        if let Some(path) = find_path(maze, start, end) {
+            // Move only a small step along the path
+            if path.len() > 1 {
+                let next = path[1];
+                // ...existing collision checks...
+                if !self.collides_with_maze(next.0, next.1, maze)
+                    && !self.collides_with_enemies(next.0, next.1, other_enemies) {
+                    self.x = next.0;
+                    self.y = next.1;
+                }
+            }
+        } else {
+            // Fallback to original tracking if path not found
+            let dx = player_x - self.x;
+            let dy = player_y - self.y;
+            let distance = ((dx * dx + dy * dy) as f64).sqrt();
+            let vx = (ENEMY_SPEED as f64 * dx as f64 / distance) as i32;
+            let vy = (ENEMY_SPEED as f64 * dy as f64 / distance) as i32;
 
-        let mut new_x = self.x + vx;
-        let mut new_y = self.y + vy;
+            let mut new_x = self.x + vx;
+            let mut new_y = self.y + vy;
 
-        if !self.collides_with_maze(new_x, new_y, maze) && !self.collides_with_enemies(new_x, new_y, other_enemies) {
-            self.x = new_x;
-            self.y = new_y;
+            if !self.collides_with_maze(new_x, new_y, maze) && !self.collides_with_enemies(new_x, new_y, other_enemies) {
+                self.x = new_x;
+                self.y = new_y;
+            }
         }
     }
 
@@ -190,13 +274,19 @@ impl Enemy {
     }
 }
 
-fn render_hud(canvas: &mut Canvas<Window>, ttf_context: &Sdl2TtfContext, player: &Player) {
+fn render_hud(
+    canvas: &mut Canvas<Window>,
+    ttf_context: &Sdl2TtfContext,
+    player: &Player,
+    fps: f64
+) {
     let font = ttf_context.load_font("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24).unwrap();
     let texture_creator = canvas.texture_creator();
-    let surface = font.render(&format!("Health: {}  Ammo: {}", player.health, player.ammo))
-        .blended(Color::WHITE).unwrap();
+    let surface = font.render(&format!("Health: {}  Ammo: {}  FPS: {:.1}", player.health, player.ammo, fps))
+        .blended(Color::YELLOW)
+        .unwrap();
     let texture = texture_creator.create_texture_from_surface(&surface).unwrap();
-    canvas.copy(&texture, None, Rect::new(10, 10, 200, 30)).unwrap();
+    canvas.copy(&texture, None, Rect::new(10, 10, 300, 30)).unwrap();
 }
 
 fn render_enemy_health(canvas: &mut Canvas<Window>, ttf_context: &Sdl2TtfContext, enemy: &Enemy) {
@@ -241,9 +331,13 @@ fn main() {
     let mut ammo_drops = vec![];
 
     let maze = generate_maze();
-    println!("{:?}", maze);
+
+    let mut last_time = Instant::now();
+    let mut frames = 0;
+    let mut fps = 0.0;
 
     'running: loop {
+        let frame_start = Instant::now();
         let mouse_state = event_pump.mouse_state();
         let mouse_x = mouse_state.x();
         let mouse_y = mouse_state.y();
@@ -292,14 +386,26 @@ fn main() {
             }
         });
 
+        frames += 1;
+        let now = Instant::now();
+        let dt = now.duration_since(last_time).as_secs_f64();
+        if dt >= 1.0 {
+            fps = frames as f64 / dt;
+            frames = 0;
+            last_time = now;
+        }
+
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
 
         // Draw the maze
-        canvas.set_draw_color(Color::RGB(255, 255, 255));
-
-        for &(x, y, w, h) in &maze {
-            println!("{} {} {} {}", x, y, w, h);
+        for (i, &(x, y, w, h)) in maze.iter().enumerate() {
+            // The last 4 are the outer walls
+            if i >= maze.len() - 4 {
+                canvas.set_draw_color(Color::RGB(128, 0, 128)); // purple
+            } else {
+                canvas.set_draw_color(Color::RGB(255, 255, 255));
+            }
             canvas.fill_rect(Rect::new(x, y, w, h)).unwrap();
         }
 
@@ -339,9 +445,15 @@ fn main() {
         canvas.draw_line((mouse_x - 10, mouse_y), (mouse_x + 10, mouse_y)).unwrap();
         canvas.draw_line((mouse_x, mouse_y - 10), (mouse_x, mouse_y + 10)).unwrap();
 
-        render_hud(&mut canvas, &ttf_context, &player);
+        render_hud(&mut canvas, &ttf_context, &player, fps);
 
         canvas.present();
-        ::std::thread::sleep(Duration::from_millis(16));
+
+        // Lock to 60 FPS
+        let frame_time = frame_start.elapsed();
+        let target_frame_time = Duration::from_millis(16);
+        if frame_time < target_frame_time {
+            std::thread::sleep(target_frame_time - frame_time);
+        }
     }
 }
